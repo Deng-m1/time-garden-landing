@@ -609,6 +609,12 @@ export function renderPlant(ctx, gn, g, o = {}) {
   const S = scale / sk.height;   // 统一到目标像素高度
   const x = (o.x ?? 0) - (centerX ? ((sk.minX + sk.maxX) / 2) * S : 0);
 
+  /* 花径绘制期放大（美术三期，评审替代路径 3）：只在绘制时放大花朵，
+   * 骨架的 bloomSize/站位/时序原封不动——金样零破坏。
+   * 近景场景（商店 shot 英雄株/详情/仪式/分享卡）用它把花抬到
+   * 参考图的画面占比；缺省 1 = 二期行为。 */
+  const bloomScale = o.bloomScale ?? 1;
+
   /* 方向光（美术二期）：单一光源与天空时段联动（app 层传 sky 派生的 light），
    * 决定叶的受光/背光面、花瓣朝向明暗、逆光 rim 与次表面透光。
    * 无 light（分享卡/标本/缩略）时用默认左上光——版式光，不是时刻光。
@@ -745,7 +751,7 @@ export function renderPlant(ctx, gn, g, o = {}) {
       const bud = clamp((g - b.budBirth) / b.budSpan);
       if (bud <= 0.001) continue;
       const open = clamp((g - b.openBirth) / b.openSpan);
-      drawBloom(ctx, T, S, gn, b, bud, open, pal, detailK, petalStagger, lod, light, lightA, lightPow);
+      drawBloom(ctx, T, S, gn, b, bud, open, pal, detailK, petalStagger, lod, light, lightA, lightPow, bloomScale);
     }
   }
 
@@ -1001,14 +1007,14 @@ function hsla01(hslStr, a) {
   return hslStr.replace(/,1\)$/, `,${a})`);
 }
 
-function drawBloom(ctx, T, S, gn, b, bud, open, pal, detail, stag = 0, lod = null, light = DEF_LIGHT, lightA = -0.42, lightPow = 1) {
+function drawBloom(ctx, T, S, gn, b, bud, open, pal, detail, stag = 0, lod = null, light = DEF_LIGHT, lightA = -0.42, lightPow = 1, bloomScale = 1) {
   const [ax, ay] = T(b.x, b.y);
   /* 每朵花的确定性身份（盲评 P0-3：禁止同 open 值克隆）：
    * 自转 spin 与位置在骨架里就互不相同且确定，混入种子后做整花±5% 大小差、
    * 花形整体色相微差，再传给逐瓣抖动。 */
   const bk = elemKey(gn.seed, b.x, b.y, Math.round(b.spin * 2048));
   const sizeJ = 0.95 + 0.10 * hash01(bk + 1);
-  const size = b.size * S * (lod ? lod.bloomBoost : 1) * sizeJ;
+  const size = b.size * S * (lod ? lod.bloomBoost : 1) * sizeJ * bloomScale;
   ctx.save();
   ctx.translate(ax, ay);
   ctx.rotate(b.angle);   // 屏幕坐标：0 = 向上
@@ -1039,7 +1045,7 @@ function drawBloom(ctx, T, S, gn, b, bud, open, pal, detail, stag = 0, lod = nul
     warm: light.warm,
   };
   const form = gn.bloomForm;
-  if (form === 'bell') drawBell(ctx, size * s, gn, pal, op, bk);
+  if (form === 'bell') drawBell(ctx, size * s, gn, pal, op, bk, lt);
   else if (form === 'spike') drawSpike(ctx, size * s, gn, pal, op, lod, bk);
   else if (form === 'umbel' || b.floret) drawFloret(ctx, size * s, gn, pal, op, bk);
   else if (form === 'pom') drawPom(ctx, size * s, gn, pal, op, detail, stag, bk, lt);
@@ -1111,24 +1117,57 @@ function drawStar(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
     const oi = petalOpen(op, i, n, stag);
     const j = petalJitter(bk, i);
     const rot = (i / n) * TAU + j.rot;
-    /* 方向光：受光瓣 +L 微暖，背光瓣 -L；低日头时背光瓣尖端透光（次表面） */
+    /* 方向光：受光瓣 +L 微暖，背光瓣 -L；低日头时背光瓣「烧透」（次表面）——
+     * 美术三期加强：透光从只染尖端升到整瓣渐变中段 + 瓣内透光核。 */
     const litK = petalLit(lt, rot);
     const dl = j.dl + (litK - 0.5) * 7;
     const dh = j.dh + (litK - 0.5) * (lt ? lt.warm * 6 : 0);
-    const trans = lt ? lt.warm * clamp(0.5 - litK) * 2 * 9 : 0;
+    const trans = lt ? lt.warm * clamp(0.5 - litK) * 2 * 14 : 0;
     ctx.save();
     ctx.rotate(rot);
     ctx.scale(j.scale, j.scale * lerp(0.35, 1, oi));
     petalPath(ctx, L * lerp(0.72, 1, oi), W, 'point');
     const gd = ctx.createLinearGradient(0, 0, 0, -L);
     gd.addColorStop(0, pal.petalDeepT(dh, dl));
-    gd.addColorStop(0.45, pal.petalT(dh, dl));
+    gd.addColorStop(0.45, pal.petalT(dh + trans * 0.35, dl + trans * 0.45));
     gd.addColorStop(1, pal.petalLightT(dh + trans * 0.5, dl * 0.6 + trans));
     ctx.fillStyle = gd; ctx.fill();
-    if (detail > 0.5) { ctx.strokeStyle = pal.petalEdge; ctx.lineWidth = Math.max(0.4, r * 0.045); ctx.stroke(); }
+    // 透光核：光从瓣背穿过的暖亮斑（同瓣形路径二次填充，天然被裁在瓣内）
+    // 三期复核尾项：核强度上抬一档（0.42→0.48），复测对比度不越线
+    if (trans > 4.5 && detail > 0.5 && L > 7) {
+      const core = ctx.createRadialGradient(0, -L * 0.60, 0, 0, -L * 0.60, L * 0.38);
+      core.addColorStop(0, hsla01(pal.petalLightT(dh + 9, Math.min(dl + 15, 30)), 0.48 * clamp(trans / 14)));
+      core.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = core; ctx.fill();
+    }
+    // 瓣缘描边必须在瓣脉之前：petalStreaks 会 beginPath 覆盖当前瓣形路径。
+    // 美术三期：描边宽度 0.045r→0.028r——近景大花的重描边是「剪纸感」元凶，
+    // 参考图的瓣靠瓣间明暗分离，不靠轮廓线
+    if (detail > 0.5) { ctx.strokeStyle = pal.petalEdge; ctx.lineWidth = Math.max(0.35, r * 0.028); ctx.stroke(); }
+    // 瓣脉（美术三期）：近景花瓣的两条纵向淡纹——参考图花瓣的「厚度感」
+    // 一半来自瓣面的放射纹理，纯渐变读作塑料
+    if (detail > 0.7 && L > 10) {
+      petalStreaks(ctx, L, W, pal, dh, dl, 2);
+    }
     ctx.restore();
   }
   centerDot(ctx, r * 0.34 * op, pal, detail);
+}
+
+/** 瓣脉纹（美术三期）：沿瓣轴的确定性淡纹，基部深、近尖端收——
+ * 调用方需保证当前 path 已是瓣形（本函数只描线，不裁剪也不出瓣：
+ * 纹线终点收在 0.86L 以内，束在瓣宽 0.44 内）。 */
+function petalStreaks(ctx, L, W, pal, dh, dl, n = 2) {
+  ctx.strokeStyle = hsla01(pal.petalDeepT(dh, dl - 4), 0.16);
+  ctx.lineWidth = Math.max(0.5, W * 0.05);
+  ctx.lineCap = 'round';
+  for (let k = 0; k < n; k++) {
+    const sx = (k - (n - 1) / 2) * W * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(sx * 0.3, -L * 0.12);
+    ctx.quadraticCurveTo(sx, -L * 0.5, sx * 0.72, -L * 0.86);
+    ctx.stroke();
+  }
 }
 
 function drawPom(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
@@ -1155,7 +1194,12 @@ function drawPom(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
         : ring === 1 ? pal.petalLightT(dh, dl)
           : pal.petalDeepT(dh, dl);
       ctx.fill();
-      if (detail > 0.5 && ring === 0) { ctx.strokeStyle = pal.petalEdge; ctx.lineWidth = Math.max(0.35, r * 0.035); ctx.stroke(); }
+      if (detail > 0.5 && ring === 0) { ctx.strokeStyle = pal.petalEdge; ctx.lineWidth = Math.max(0.3, r * 0.022); ctx.stroke(); }
+      // 瓣脉（美术三期）：只描外圈——内圈埋在花心里，纹理会糊成噪；
+      // 顺序在描边之后（petalStreaks 会 beginPath 覆盖瓣形路径）
+      if (ring === 0 && detail > 0.7 && L > 10) {
+        petalStreaks(ctx, L, W, pal, dh, dl, 2);
+      }
       ctx.restore();
     }
   }
@@ -1172,7 +1216,7 @@ function drawDisc(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
     const litK = petalLit(lt, rot);
     const dl = j.dl + (litK - 0.5) * 6;
     const dh = j.dh + (litK - 0.5) * (lt ? lt.warm * 5 : 0);
-    const trans = lt ? lt.warm * clamp(0.5 - litK) * 2 * 7 : 0;
+    const trans = lt ? lt.warm * clamp(0.5 - litK) * 2 * 12 : 0;
     ctx.save();
     // 盘状射瓣排列紧密，角度抖动减半防止相邻重叠成锯齿
     ctx.rotate(rot);
@@ -1182,6 +1226,17 @@ function drawDisc(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
       ? pal.petalT(dh + trans * 0.4, dl + trans * 0.5)
       : pal.petalLightT(dh + trans * 0.4, dl + trans * 0.5);
     ctx.fill();
+    // 烧透加强（美术三期；复核尾项核强度 0.36→0.42）：背光射瓣的透光核
+    if (trans > 4.5 && detail > 0.5 && L > 8) {
+      const core = ctx.createRadialGradient(0, -L * 0.58, 0, 0, -L * 0.58, L * 0.36);
+      core.addColorStop(0, hsla01(pal.petalLightT(dh + 8, Math.min(dl + 13, 28)), 0.42 * clamp(trans / 12)));
+      core.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = core; ctx.fill();
+    }
+    // 瓣脉（美术三期）：盘状射瓣窄，单条中脉纹
+    if (detail > 0.7 && L > 11) {
+      petalStreaks(ctx, L, W, pal, dh, dl, 1);
+    }
     ctx.restore();
   }
   // 花盘：受光侧亮、背光侧沉——花心也是一枚球，不是一枚贴纸
@@ -1206,11 +1261,14 @@ function drawDisc(ctx, r, gn, pal, op, detail, stag = 0, bk = 0, lt = null) {
   }
 }
 
-function drawBell(ctx, r, gn, pal, op, bk = 0) {
+function drawBell(ctx, r, gn, pal, op, bk = 0, lt = null) {
   const h = r * 1.55 * lerp(0.5, 1, op), w = r * 0.78 * lerp(0.45, 1, op);
   // 整钟微差：同株两只吊钟不允许同構（色相 ±4、裙摆倾斜 ±3°）
   const dh = (hash01(bk + 7) * 2 - 1) * 4;
   const tilt = (hash01(bk + 8) * 2 - 1) * 3 * D2R;
+  /* 垂花的烧透（美术三期）：钟膜薄、朝下开口，低日头光从背后穿过时
+   * 整只裙摆透暖——透光量随光的低角度（warm）走。 */
+  const trans = lt ? lt.warm * 9 : 0;
   ctx.save();
   ctx.rotate(Math.PI + tilt); // 垂花朝下
   ctx.beginPath();
@@ -1226,8 +1284,17 @@ function drawBell(ctx, r, gn, pal, op, bk = 0) {
   ctx.bezierCurveTo(w * 0.96, h * 0.86, w * 1.0, h * 0.42, w * 0.26, 0);
   ctx.closePath();
   const gd = ctx.createLinearGradient(0, 0, 0, h);
-  gd.addColorStop(0, pal.petalDeepT(dh, 0)); gd.addColorStop(0.6, pal.petalT(dh, 0)); gd.addColorStop(1, pal.petalLightT(dh, 0));
+  gd.addColorStop(0, pal.petalDeepT(dh, 0));
+  gd.addColorStop(0.6, pal.petalT(dh + trans * 0.3, trans * 0.4));
+  gd.addColorStop(1, pal.petalLightT(dh + trans * 0.5, trans * 0.9));
   ctx.fillStyle = gd; ctx.fill();
+  // 裙摆透光核（复核尾项核强度 0.34→0.40）
+  if (trans > 4 && h * 1 > 8) {
+    const core = ctx.createRadialGradient(0, h * 0.72, 0, 0, h * 0.72, w * 0.7);
+    core.addColorStop(0, hsla01(pal.petalLightT(dh + 8, 14), 0.40 * clamp(trans / 9)));
+    core.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = core; ctx.fill();
+  }
   ctx.strokeStyle = pal.petalEdge; ctx.lineWidth = Math.max(0.4, r * 0.05); ctx.stroke();
   ctx.beginPath(); ctx.ellipse(0, h, w * 0.7, r * 0.2 * op, 0, 0, TAU);
   ctx.fillStyle = pal.centerDeep; ctx.globalAlpha *= 0.55; ctx.fill();
@@ -1317,6 +1384,20 @@ function centerDot(ctx, rr, pal, detail) {
       ctx.moveTo(Math.cos(a) * rr * 0.25, Math.sin(a) * rr * 0.25);
       ctx.lineTo(Math.cos(a) * rr * 1.5, Math.sin(a) * rr * 1.5);
       ctx.stroke();
+    }
+    /* 花药环点（美术三期）：近景花心一圈确定性小点——参考图花心是
+     * 环状颗粒结构，不是一枚色块加射线 */
+    if (rr > 5) {
+      ctx.fillStyle = pal.centerDeep;
+      const n = 12;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + 0.26;
+        const rad = rr * (0.68 + 0.10 * ((i * 7) % 3) / 2);   // 环位微差（确定性）
+        const d = rr * 0.14;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * rad, Math.sin(a) * rad, d, 0, TAU);
+        ctx.fill();
+      }
     }
   }
 }
