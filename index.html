@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  时间花园 · 高考季落地页（单屏，纯静态，零构建）
+
+  · 植物由 js/engine/（自 prototype/js/ 原样复制的确定性引擎）实时渲染，
+    形态由「高考」二字推导，生长值由剩余天数决定。
+  · 上架 CTA 为静态「敬请期待」+ App Store 徽标占位（原邮箱留资链路依赖
+    Formspree 占位端点、从未配置，已照 focus-canvas 先例整体摘除，
+    git 历史留档）。上架后把占位徽标换成官方徽标（Apple Marketing Tools
+    生成）并加商店链接。
+  · ES Module 需要 http 服务：本地预览用 `python3 -m http.server`，
+    部署到 GitHub Pages / Vercel 直接可用。
+  ============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>时间花园 · 高考季 — 离高考还有多少天，就把它种下</title>
+<meta name="description" content="离高考还有 N 天——把它种下。这株植物由「高考」二字推导，日子越近长得越盛，6 月 7 日绽放。时间花园：会生长的倒数日，完全离线，一次买断。">
+<meta property="og:title" content="时间花园 · 高考季 — 把等待种成花园">
+<meta property="og:description" content="离高考的每一天，都在让这株植物长高一点。日子越近，开得越盛，6 月 7 日绽放。">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F5F2EC">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101319">
+<style>
+/* tokens 取自 DESIGN / prototype/css/tokens.css：纸（米）、墨（暖黑）、苔（墨绿） */
+:root {
+  --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+          "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --f-serif: "New York", ui-serif, "Songti SC", "Noto Serif CJK SC", Georgia,
+             "Times New Roman", serif;
+  --paper-0: hsl(38 30% 95.5%);
+  --paper-1: hsl(40 38% 98.5%);
+  --paper-2: hsl(36 24% 91.5%);
+  --ink-900: hsl(28 13% 12%);
+  --ink-700: hsl(28 9% 30%);
+  --ink-500: hsl(28 7% 46%);
+  --ink-300: hsl(28 8% 66%);
+  --hairline: hsl(32 15% 85%);
+  --moss: hsl(150 27% 28%);
+  --moss-wash: hsl(148 26% 92%);
+  --terracotta: hsl(14 52% 48%);
+  --gold: hsl(38 68% 44%);
+  --sh-1: 0 1px 2px hsla(28 20% 20% / .06), 0 4px 14px hsla(28 20% 20% / .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper-0: hsl(224 20% 7.5%);
+    --paper-1: hsl(224 17% 12%);
+    --paper-2: hsl(224 15% 16.5%);
+    --ink-900: hsl(42 22% 94%);
+    --ink-700: hsl(38 11% 79%);
+    --ink-500: hsl(34 8% 60%);
+    --ink-300: hsl(30 6% 42%);
+    --hairline: hsl(226 12% 23%);
+    --moss: hsl(148 34% 62%);
+    --moss-wash: hsl(150 20% 16%);
+    --terracotta: hsl(14 58% 63%);
+    --gold: hsl(40 66% 62%);
+    --sh-1: 0 1px 2px hsla(0 0% 0% / .34), 0 4px 14px hsla(0 0% 0% / .28);
+  }
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--f-ui);
+  background: var(--paper-0);
+  color: var(--ink-900);
+  font-size: 17px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page {
+  min-height: 100dvh;
+  max-width: 640px; margin: 0 auto;
+  padding: 0 20px calc(16px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column;
+}
+
+header {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 18px 0 14px; border-bottom: 1px solid var(--hairline);
+}
+.brand { font-weight: 600; font-size: 16px; letter-spacing: -.2px; }
+.brand .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--moss); margin-right: 8px; }
+.season {
+  font-size: 11px; font-weight: 600; letter-spacing: 1.5px; color: var(--ink-500);
+}
+
+main { flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+.count-label { margin-top: 26px; font-size: 14px; color: var(--ink-500); letter-spacing: .04em; }
+.count {
+  font-family: var(--f-serif); font-weight: 500;
+  font-size: clamp(88px, 26vw, 132px); line-height: 1.02; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 0;
+}
+.count .unit { font-size: .28em; font-weight: 400; color: var(--ink-700); margin-left: 6px; letter-spacing: 0; }
+.count-date { font-size: 13px; color: var(--ink-300); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+.garden { position: relative; width: min(360px, 88vw); margin-top: 6px; }
+.garden canvas { display: block; width: 100%; height: auto; }
+.soil {
+  height: 1px; background: var(--hairline); position: relative;
+  margin-top: -1px;
+}
+.stage-chip {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  margin-top: 12px; padding: 5px 12px;
+  background: var(--moss-wash); border-radius: 999px;
+  font-size: 12px; color: var(--moss); font-weight: 600; letter-spacing: .06em;
+}
+.stage-chip .fig { color: var(--ink-500); font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* 六阶段小图：它会这样长大 */
+.stages { margin-top: 18px; width: min(400px, 92vw); }
+.stages .row { display: flex; justify-content: space-between; align-items: flex-end; }
+.stages canvas { width: 52px; height: 64px; display: block; }
+.stages .names { display: flex; justify-content: space-between; margin-top: 4px; }
+.stages .names span { width: 52px; font-size: 10px; letter-spacing: .12em; color: var(--ink-300); }
+.stages .names span.on { color: var(--moss); font-weight: 600; }
+
+.claim {
+  font-family: var(--f-serif); font-size: 26px; letter-spacing: .02em;
+  margin-top: 26px; font-weight: 500;
+}
+.claim-sub { font-size: 14px; color: var(--ink-500); margin-top: 8px; max-width: 30em; }
+
+/* 即将上架（App Store 徽标占位，上架后换官方徽标 + 商店链接） */
+.coming { margin-top: 26px; }
+.appstore-badge {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 11px 26px 12px; text-align: left;
+  background: var(--ink-900); color: var(--paper-0); border-radius: 12px;
+}
+.appstore-badge .badge-small { font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 1.1px; opacity: .72; }
+.appstore-badge .badge-big { font-size: 21px; line-height: 26px; font-weight: 600; letter-spacing: -.2px; }
+.coming .note { font-size: 13px; color: var(--ink-500); margin-top: 10px; }
+
+footer {
+  margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--hairline);
+  display: grid; gap: 4px; text-align: center;
+}
+footer .l1 { font-size: 12px; color: var(--ink-500); letter-spacing: .05em; }
+footer .l2 { font-size: 11px; color: var(--ink-300); font-style: italic; }
+
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ink-900); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="brand"><span class="dot" aria-hidden="true"></span>时间花园 · 倒数日</div>
+    <div class="season">高考季</div>
+  </header>
+
+  <main>
+    <p class="count-label" id="count-label">距离高考还有</p>
+    <div class="count" aria-live="polite"><span id="count-num">—</span><span class="unit" id="count-unit">天</span></div>
+    <p class="count-date" id="count-date"></p>
+
+    <div class="garden">
+      <canvas id="plant" width="720" height="520" aria-label="一株按剩余天数实时生长的植物，由「高考」二字推导"></canvas>
+      <div class="soil"></div>
+      <div class="stage-chip"><span id="stage-name">—</span><span class="fig" id="stage-fig"></span></div>
+    </div>
+
+    <div class="stages" aria-label="六个生长阶段预览">
+      <div class="row" id="stage-row"></div>
+      <div class="names" id="stage-names"></div>
+    </div>
+
+    <h1 class="claim">把等待种成花园。</h1>
+    <p class="claim-sub">这株植物由「高考」二字推导，同名同株；形态由剩余天数决定——日子越近，长得越盛，6 月 7 日那天绽放。</p>
+
+    <div class="coming" id="coming">
+      <span class="appstore-badge" role="img" aria-label="即将上架 App Store">
+        <span class="badge-small">即将上架</span>
+        <span class="badge-big">App Store</span>
+      </span>
+      <p class="note">正在完成上架前的最后准备——免费下载，免费种 5 株。敬请期待。</p>
+    </div>
+  </main>
+
+  <footer>
+    <div class="l1">时间花园 —— 每个期待都长成一株植物 · 完全离线 · 无广告 · 一次买断 · <a href="privacy/" style="color:inherit">隐私政策</a></div>
+    <div class="l2">English coming soon. © 2026 Time Garden</div>
+  </footer>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
